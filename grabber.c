@@ -7,61 +7,81 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
-#include <event.h>
+#include <event2/event.h>
 
 #include "grabber.h"
+#include "dybuf.h"
 
 struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
 {
-  struct bg_client* tmp = malloc(sizeof(struct bg_client));
-  memset(tmp, 0, sizeof(struct bg_client));
+  current_clients++;
 
-  tmp->fd = fd;
-  tmp->host = host;
-  tmp->port = port;
-  tmp->request = evbuffer_new();
-  tmp->request_sent = 0;
-  tmp->response = evbuffer_new();
-  tmp->response_read = 0;
+  struct bg_client* client = malloc(sizeof(struct bg_client));
+  memset(client, 0, sizeof(struct bg_client));
 
-  evbuffer_add_printf(tmp->request, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  client->fd = fd;
+  client->host = host;
+  client->port = port;
+  client->request = dybuf_new();
+  client->request_sent = 0;
+  client->response = dybuf_new();
+  client->response_read = 0;
 
-  return tmp;
+  char request_a[] = "GET / HTTP/1.1\r\nHost: ";
+  char request_b[] = "\r\nConnection: close\r\n\r\n";
+  char host_str[16];
+
+  sprintf(host_str, "%lu.%lu.%lu.%lu", ((client->host & 0xFF000000) >> 24), ((client->host & 0x00FF0000) >> 16), ((client->host & 0x0000FF00) >> 8), ((client->host & 0x000000FF) >> 0));
+
+  dybuf_append(client->request, request_a, strlen(request_a));
+  dybuf_append(client->request, host_str, strlen(host_str));
+  dybuf_append(client->request, request_b, strlen(request_b));
+
+  return client;
 }
 
 void bg_client_free(struct bg_client* client)
 {
-  evbuffer_free(client->request);
-  evbuffer_free(client->response);
+  current_clients--;
+
+  event_del(client->ev);
+  event_free(client->ev);
+  close(client->fd);
+  dybuf_free(client->request);
+  dybuf_free(client->response);
+  free(client);
+
+  if (current_clients < 250)
+    event_add(event_stdin, NULL);
 }
 
-void client_read_callback(struct bufferevent* ev, void* arg)
+void client_callback(evutil_socket_t fd, short ev, void* arg)
+{
+  if (ev & EV_READ)
+    client_read_callback(fd, arg);
+  if (ev & EV_WRITE)
+    client_write_callback(fd, arg);
+}
+
+void client_read_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
 
   printf("Read callback called for client %p\n", client);
 
-  int total = 0;
-  int read = 0;
-  char tmp[1024];
-  do
-  {
-    memset(tmp, 0, 1024);
-    read = bufferevent_read(ev, tmp, 1024);
-    evbuffer_add(client->response, tmp, read);
-    printf("Read %d bytes from client %p\n", read, client);
-    total += read;
-  } while (read > 0);
+  char tmp[2048];
+  int read = recv(client->fd, tmp, 1024, 0);
+  if (read > 0)
+    dybuf_append(client->response, tmp, read);
+  printf("Read %d bytes from client %p\n", read, client);
 
-  printf("Read %d bytes total from client %p\n", total, client);
-
-  if (total == 0)
-    client_finished_callback(ev, arg);
-  if (total == -1)
-    client_error_callback(ev, 0, arg);
+  if (read == 0)
+    client_finished_callback(fd, arg);
+  if (read == -1)
+    client_error_callback(fd, arg);
 }
 
-void client_write_callback(struct bufferevent* ev, void* arg)
+void client_write_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
 
@@ -69,110 +89,118 @@ void client_write_callback(struct bufferevent* ev, void* arg)
 
   if (client->request_sent == 0)
   {
-    evbuffer_write(client->request, client->fd);
+    send(client->fd, client->request->data, client->request->size, 0);
     client->request_sent = 1;
   }
-  bufferevent_enable(client->ev, EV_READ);
-  bufferevent_disable(client->ev, EV_WRITE);
+
+  event_assign(client->ev, ev_base, client->fd, EV_READ|EV_PERSIST, &client_callback, client);
+  event_add(client->ev, NULL);
 }
 
-void client_finished_callback(struct bufferevent* ev, void* arg)
+void client_finished_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
 
   printf("Finished callback called for client %p\n", client);
 
-  printf("Data from client %p:\n", client);
+  printf("Data from client %p (%lu.%lu.%lu.%lu:%d):\n", client, ((client->host & 0xFF000000) >> 24), ((client->host & 0x00FF0000) >> 16), ((client->host & 0x0000FF00) >> 8), ((client->host & 0x000000FF) >> 0), client->port);
   printf("============\n");
-  char tmp[1024];
-  memset(tmp, 0, 1024);
-  while (evbuffer_remove(client->response, tmp, 255))
-    printf("%s", tmp);
+  int i;
+  for (i=0;i<client->response->size;++i)
+    printf("%c", *(client->response->data+i));
   printf("============\n");
 
-  bufferevent_free(client->ev);
-  close(client->fd);
   bg_client_free(client);
 }
 
-void client_error_callback(struct bufferevent* ev, short err, void* arg)
+void client_error_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
 
   printf("Error callback called for client %p\n", client);
 
-  if (err & EVBUFFER_READ)    printf("`- Error occured during reading\n");
-  if (err & EVBUFFER_WRITE)   printf("`- Error occured during writing\n");
-  if (err & EVBUFFER_EOF)     printf("`- Error was EOF\n");
-  if (err & EVBUFFER_ERROR)   printf("`- Error was generic\n");
-  if (err & EVBUFFER_TIMEOUT) printf("`- Error was timeout related\n");
-
-  client_finished_callback(ev, arg);
+  client_finished_callback(fd, arg);
 }
 
-void stdin_read_callback(struct bufferevent* ev, void* arg)
+void stdin_callback(evutil_socket_t fd, short ev, void* arg)
+{
+  if (ev & EV_READ)
+    stdin_read_callback(fd, arg);
+}
+
+void stdin_read_callback(evutil_socket_t fd, void* arg)
 {
   printf("Read callback called for stdin\n");
 
-  char* line;
-  while ((line = evbuffer_readline(ev->input)) != NULL)
+  char line[1024];
+  if (fgets(line, 1024, stdin) == NULL)
   {
-    char host_str[16];
-    struct in_addr host_in;
-    unsigned long int host = 0;
-    char port_str[6];
-    int port = 0;
-
-    memset(host_str, 0, 16);
-    memset(port_str, 0, 6);
-
-    if (strchr(line, ':') != NULL)
-    {
-      strncpy(host_str, line, strchr(line, ':')-line);
-      strncpy(port_str, strchr(line, ':')+1, 5);
-      inet_pton(AF_INET, host_str, &host_in);
-      host = host_in.s_addr;
-      port = htons(atoi(port_str));
-    }
-
-    if (host == INADDR_NONE || port < 1 || port > 65535)
-      return;
-
-    int fd;
-    if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
-      return;
-
-    int flags = fcntl(fd, F_GETFL);
-    flags |= O_NONBLOCK;
-    if (fcntl(fd, F_SETFL, flags) == -1)
-      return;
-
-    struct sockaddr_in saddr;
-    saddr.sin_family = AF_INET;
-    saddr.sin_port = port;
-    saddr.sin_addr.s_addr = host;
-    memset(saddr.sin_zero, 0, sizeof(saddr.sin_zero));
-
-    struct bg_client* client = bg_client_new(fd, host, port);
-
-    client->ev = bufferevent_new(client->fd, &client_read_callback, &client_write_callback, &client_error_callback, client);
-    bufferevent_enable(client->ev, EV_WRITE);
-
-    connect(fd, (struct sockaddr*)&saddr, sizeof(struct sockaddr_in));
+    event_del(event_stdin);
+    return;
   }
+
+  char host_str[16];
+  struct in_addr host_in;
+  unsigned long int host = 0;
+  char port_str[6];
+  int port = 0;
+
+  memset(host_str, 0, 16);
+  memset(port_str, 0, 6);
+
+  if (strchr(line, ':') != NULL)
+  {
+    strncpy(host_str, line, strchr(line, ':')-line);
+    strncpy(port_str, strchr(line, ':')+1, 5);
+    inet_pton(AF_INET, host_str, &host_in);
+    host = ntohl(host_in.s_addr);
+    port = atoi(port_str);
+  }
+
+  if (host == INADDR_NONE || port < 1 || port > 65535)
+    return;
+
+  printf("Host: %s\nPort: %d\n", host_str, port);
+
+  int s;
+  if ((s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
+  return;
+
+  int flags = fcntl(s, F_GETFL);
+  flags |= O_NONBLOCK;
+  if (fcntl(s, F_SETFL, flags) == -1)
+    return;
+
+  struct sockaddr_in saddr;
+  saddr.sin_family = AF_INET;
+  saddr.sin_port = htons(port);
+  saddr.sin_addr.s_addr = htonl(host);
+  memset(saddr.sin_zero, 0, sizeof(saddr.sin_zero));
+
+  struct bg_client* client = bg_client_new(s, host, port);
+
+  client->ev = event_new(ev_base, client->fd, EV_READ|EV_WRITE, &client_callback, client);
+  event_add(client->ev, NULL);
+
+  connect(s, (struct sockaddr*)&saddr, sizeof(struct sockaddr_in));
+
+  if (current_clients < 250)
+    event_add(event_stdin, NULL);
 }
 
-void stdin_error_callback(struct bufferevent* ev, short err, void* arg)
+void stdin_error_callback(evutil_socket_t fd, void* arg)
 {
   printf("Error callback called for stdin\n");
 }
 
 int main(int argc, char** argv)
 {
-  struct event_base* ev_base = event_init();
+  ev_base = event_base_new();
 
-  struct bufferevent* event_stdin = bufferevent_new(fileno(stdin), &stdin_read_callback, NULL, &stdin_error_callback, NULL);
-  bufferevent_enable(event_stdin, EV_READ);
+  event_stdin = event_new(ev_base, fileno(stdin), EV_READ, &stdin_callback, NULL);
+  event_add(event_stdin, NULL);
+
+  current_clients = 0;
 
   printf("Dispatching events...\n");
   event_base_dispatch(ev_base);
