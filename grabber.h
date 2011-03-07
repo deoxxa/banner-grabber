@@ -10,6 +10,7 @@ struct bg_client
   int fd;
   unsigned long int host;
   int port;
+  time_t time;
   struct event* ev;
   struct dybuf* request;
   int request_sent;
@@ -32,7 +33,13 @@ void stdin_error_callback(evutil_socket_t fd, void* arg);
 
 struct event_base* ev_base;
 struct event* event_stdin;
-int current_clients;
+int requests_current;
+int requests_max;
+int request_timeout;
 char* request_template;
+
+void (*output_function_pre)();
+void (*output_function_record)(unsigned long int host, int port, time_t time, char* data, int len);
+void (*output_function_post)();
 
 #endif

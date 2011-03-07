@@ -1,0 +1,7 @@
+My "To Do" List
+===============
+
+1) Make output formats into plugins
+2) Fix bugs as they're reported
+3) Make the tool more flexible
+4) Windows compatibility

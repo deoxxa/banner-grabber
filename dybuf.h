@@ -4,6 +4,7 @@
 struct dybuf
 {
   size_t size;
+  size_t used;
   char* data;
 };
 

@@ -8,13 +8,18 @@
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <event2/event.h>
+#include <time.h>
 
 #include "grabber.h"
 #include "dybuf.h"
 
+#include "output_csv.h"
+#include "output_json.h"
+#include "output_xml.h"
+
 struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
 {
-  current_clients++;
+  requests_current++;
 
   struct bg_client* client = malloc(sizeof(struct bg_client));
   memset(client, 0, sizeof(struct bg_client));
@@ -31,6 +36,9 @@ struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
   sprintf(ip_str, "%lu.%lu.%lu.%lu", ((client->host & 0xFF000000) >> 24), ((client->host & 0x00FF0000) >> 16), ((client->host & 0x0000FF00) >> 8), ((client->host & 0x000000FF) >> 0));
   char port_str[6];
   sprintf(port_str, "%d", client->port);
+
+  if (request_template == NULL)
+    return client;
 
   int i = 0;
   int offset = 0;
@@ -88,7 +96,7 @@ struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
 
 void bg_client_free(struct bg_client* client)
 {
-  current_clients--;
+  requests_current--;
 
   event_del(client->ev);
   event_free(client->ev);
@@ -97,7 +105,7 @@ void bg_client_free(struct bg_client* client)
   dybuf_free(client->response);
   free(client);
 
-  if (current_clients < 10)
+  if (requests_current < 10)
     event_add(event_stdin, NULL);
 }
 
@@ -113,17 +121,13 @@ void client_read_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
 
-  printf("Read callback called for client %p\n", client);
-
   char tmp[2048];
   int read = recv(client->fd, tmp, 1024, 0);
   if (read > 0)
     dybuf_append(client->response, tmp, read);
-  printf("Read %d bytes from client %p\n", read, client);
-
-  if (read == 0)
+  else if (read == 0)
     client_finished_callback(fd, arg);
-  if (read == -1)
+  else
     client_error_callback(fd, arg);
 }
 
@@ -131,11 +135,11 @@ void client_write_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
 
-  printf("Write callback called for client %p\n", client);
-
   if (client->request_sent == 0)
   {
-    send(client->fd, client->request->data, client->request->size, 0);
+    if (client->request->used >= 1)
+      send(client->fd, client->request->data, client->request->used, 0);
+
     client->request_sent = 1;
   }
 
@@ -146,25 +150,13 @@ void client_write_callback(evutil_socket_t fd, void* arg)
 void client_finished_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
-
-  printf("Finished callback called for client %p\n", client);
-
-  printf("Data from client %p (%lu.%lu.%lu.%lu:%d):\n", client, ((client->host & 0xFF000000) >> 24), ((client->host & 0x00FF0000) >> 16), ((client->host & 0x0000FF00) >> 8), ((client->host & 0x000000FF) >> 0), client->port);
-  printf("============\n");
-  int i;
-  for (i=0;i<client->response->size;++i)
-    printf("%c", *(client->response->data+i));
-  printf("============\n");
-
+  (*output_function_record)(client->host, client->port, time(NULL), client->response->data, client->response->used);
   bg_client_free(client);
 }
 
 void client_error_callback(evutil_socket_t fd, void* arg)
 {
   struct bg_client* client = (struct bg_client*)arg;
-
-  printf("Error callback called for client %p\n", client);
-
   client_finished_callback(fd, arg);
 }
 
@@ -176,8 +168,6 @@ void stdin_callback(evutil_socket_t fd, short ev, void* arg)
 
 void stdin_read_callback(evutil_socket_t fd, void* arg)
 {
-  printf("Read callback called for stdin\n");
-
   char line[1024];
   if (fgets(line, 1024, stdin) == NULL)
   {
@@ -228,34 +218,75 @@ void stdin_read_callback(evutil_socket_t fd, void* arg)
 
   connect(s, (struct sockaddr*)&saddr, sizeof(struct sockaddr_in));
 
-  if (current_clients < 10)
+  if (requests_current < 10)
     event_add(event_stdin, NULL);
 }
 
 void stdin_error_callback(evutil_socket_t fd, void* arg)
 {
-  printf("Error callback called for stdin\n");
 }
 
 int main(int argc, char** argv)
 {
-  if (argc > 1)
-    request_template = argv[1];
-  else
-    request_template = NULL;
+  requests_max = 50;
+  requests_current = 0;
+  request_timeout = 10;
+  request_template = NULL;
+  output_function_pre = &output_function_csv_pre;
+  output_function_record = &output_function_csv_record;
+  output_function_post = &output_function_csv_post;
+  ev_base = NULL;
+  event_stdin = NULL;
+
+  int c;
+  while ((c = getopt(argc, argv, "r:n:t:o:h")) != -1)
+  {
+    switch (c)
+    {
+    case 'h':
+      fprintf(stderr, "Usage: %s [-h] [-r request template] [-n concurrent requests] [-t timeout] [-f format (csv|json|xml)]\n", argv[0]);
+      exit(0);
+    case 'r':
+      request_template = optarg;
+      break;
+    case 'n':
+      requests_max = atoi(optarg);
+      break;
+    case 't':
+      request_timeout = atoi(optarg);
+      break;
+    case 'o':
+      if (strcmp(optarg, "csv") == 0)
+      {
+        output_function_pre = &output_function_csv_pre;
+        output_function_record = &output_function_csv_record;
+        output_function_post = &output_function_csv_post;
+      }
+      if (strcmp(optarg, "json") == 0)
+      {
+        output_function_pre = &output_function_json_pre;
+        output_function_record = &output_function_json_record;
+        output_function_post = &output_function_json_post;
+      }
+      if (strcmp(optarg, "xml") == 0)
+      {
+        output_function_pre = &output_function_xml_pre;
+        output_function_record = &output_function_xml_record;
+        output_function_post = &output_function_xml_post;
+      }
+      break;
+    }
+  }
 
   ev_base = event_base_new();
 
   event_stdin = event_new(ev_base, fileno(stdin), EV_READ, &stdin_callback, NULL);
   event_add(event_stdin, NULL);
 
-  current_clients = 0;
+  (*output_function_pre)();
 
-  printf("Dispatching events...\n");
   event_base_dispatch(ev_base);
-  printf("All events finished apparently\n");
-
-  printf("Freeing event base...\n");
   event_base_free(ev_base);
-  printf("Done\n");
+
+  (*output_function_post)();
 }
