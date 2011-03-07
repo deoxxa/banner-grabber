@@ -239,7 +239,7 @@ int main(int argc, char** argv)
   event_stdin = NULL;
 
   int c;
-  while ((c = getopt(argc, argv, "r:n:t:o:h")) != -1)
+  while ((c = getopt(argc, argv, "r:n:t:f:h")) != -1)
   {
     switch (c)
     {
@@ -255,7 +255,7 @@ int main(int argc, char** argv)
     case 't':
       request_timeout = atoi(optarg);
       break;
-    case 'o':
+    case 'f':
       if (strcmp(optarg, "csv") == 0)
       {
         output_function_pre = &output_function_csv_pre;
