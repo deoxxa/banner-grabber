@@ -33,5 +33,6 @@ void stdin_error_callback(evutil_socket_t fd, void* arg);
 struct event_base* ev_base;
 struct event* event_stdin;
 int current_clients;
+char* request_template;
 
 #endif

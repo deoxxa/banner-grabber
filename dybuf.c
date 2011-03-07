@@ -31,4 +31,5 @@ void dybuf_append(struct dybuf* node, char* data, size_t len)
   int old_size = node->size;
   dybuf_expand(node, len);
   memcpy(node->data+old_size, data, len);
+
 }

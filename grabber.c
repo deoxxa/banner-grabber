@@ -27,15 +27,61 @@ struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
   client->response = dybuf_new();
   client->response_read = 0;
 
-  char request_a[] = "GET / HTTP/1.1\r\nHost: ";
-  char request_b[] = "\r\nConnection: close\r\n\r\n";
-  char host_str[16];
+  char ip_str[16];
+  sprintf(ip_str, "%lu.%lu.%lu.%lu", ((client->host & 0xFF000000) >> 24), ((client->host & 0x00FF0000) >> 16), ((client->host & 0x0000FF00) >> 8), ((client->host & 0x000000FF) >> 0));
+  char port_str[6];
+  sprintf(port_str, "%d", client->port);
 
-  sprintf(host_str, "%lu.%lu.%lu.%lu", ((client->host & 0xFF000000) >> 24), ((client->host & 0x00FF0000) >> 16), ((client->host & 0x0000FF00) >> 8), ((client->host & 0x000000FF) >> 0));
+  int i = 0;
+  int offset = 0;
+  for (;i<strlen(request_template);++i)
+  {
+    if (request_template[i] == '%' && i < strlen(request_template))
+    {
+      dybuf_append(client->request, request_template+offset, i-offset);
 
-  dybuf_append(client->request, request_a, strlen(request_a));
-  dybuf_append(client->request, host_str, strlen(host_str));
-  dybuf_append(client->request, request_b, strlen(request_b));
+      ++i;
+      switch (request_template[i])
+      {
+      case 'h':
+        dybuf_append(client->request, ip_str, strlen(ip_str));
+        break;
+      case 'p':
+        dybuf_append(client->request, port_str, strlen(port_str));
+        break;
+      default:
+        dybuf_append(client->request, "%", 1);
+        --i;
+        break;
+      }
+
+      offset = i+1;
+    }
+
+    if (request_template[i] == '\\' && i < strlen(request_template))
+    {
+      dybuf_append(client->request, request_template+offset, i-offset);
+
+      ++i;
+      switch (request_template[i])
+      {
+      case 'r':
+        dybuf_append(client->request, "\r", 1);
+        break;
+      case 'n':
+        dybuf_append(client->request, "\n", 1);
+        break;
+      default:
+        dybuf_append(client->request, "\\", 1);
+        --i;
+        break;
+      }
+
+      offset = i+1;
+    }
+  }
+
+  dybuf_append(client->request, request_template+offset, strlen(request_template)-offset);
 
   return client;
 }
@@ -51,7 +97,7 @@ void bg_client_free(struct bg_client* client)
   dybuf_free(client->response);
   free(client);
 
-  if (current_clients < 250)
+  if (current_clients < 10)
     event_add(event_stdin, NULL);
 }
 
@@ -160,8 +206,6 @@ void stdin_read_callback(evutil_socket_t fd, void* arg)
   if (host == INADDR_NONE || port < 1 || port > 65535)
     return;
 
-  printf("Host: %s\nPort: %d\n", host_str, port);
-
   int s;
   if ((s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
   return;
@@ -184,7 +228,7 @@ void stdin_read_callback(evutil_socket_t fd, void* arg)
 
   connect(s, (struct sockaddr*)&saddr, sizeof(struct sockaddr_in));
 
-  if (current_clients < 250)
+  if (current_clients < 10)
     event_add(event_stdin, NULL);
 }
 
@@ -195,6 +239,11 @@ void stdin_error_callback(evutil_socket_t fd, void* arg)
 
 int main(int argc, char** argv)
 {
+  if (argc > 1)
+    request_template = argv[1];
+  else
+    request_template = NULL;
+
   ev_base = event_base_new();
 
   event_stdin = event_new(ev_base, fileno(stdin), EV_READ, &stdin_callback, NULL);
