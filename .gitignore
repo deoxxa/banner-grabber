@@ -1,3 +1,6 @@
 /dybuf.o
 /grabber.o
 /grabber
+/output_csv.o
+/output_json.o
+/output_xml.o
