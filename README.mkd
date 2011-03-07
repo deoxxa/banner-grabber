@@ -10,30 +10,30 @@ input on stdin.
 Options
 -------
 
-  * -h Help output.
-  * -n Number of concurrent requests.
-  * -f Output format; currently available formats are csv, xml and json.
-  * -r Request template; %h will be replaced with the IP, %p will be replaced
-       with the port. \n will be replaced with a newline and \r will be replaced
-       with a carriage return.
+* -h Help output.
+* -n Number of concurrent requests.
+* -f Output format; currently available formats are csv, xml and json.
+* -r Request template; %h will be replaced with the IP, %p will be replaced
+     with the port. \n will be replaced with a newline and \r will be replaced
+     with a carriage return.
 
 Examples
 --------
 
 1) Existing host list (1 host:port combo per line)
 
-  cat hosts.txt | \  
-  ./grabber -n 10 -f csv -r "GET / HTTP/1.0\r\n\r\n"
+    cat hosts.txt | \  
+    ./grabber -n 10 -f csv -r "GET / HTTP/1.0\r\n\r\n"
 
 2) Output from tiny tcp scanner
 
-  packets-recv -i eth0 -f "dst port 12345" | \  
-  ./grabber -n 10 -f csv -r "GET / HTTP/1.0\r\n\r\n"
+    packets-recv -i eth0 -f "dst port 12345" | \  
+    ./grabber -n 10 -f csv -r "GET / HTTP/1.0\r\n\r\n"
 
 3) Slightly more valid HTTP request
 
-  cat hosts.txt | \  
-  ./grabber -r "GET / HTTP/1.1\r\nHost: %h:%p\r\n\r\n"
+    cat hosts.txt | \  
+    ./grabber -r "GET / HTTP/1.1\r\nHost: %h:%p\r\n\r\n"
 
 License
 -------
@@ -48,4 +48,4 @@ irc.ruxcon.org.au in various channels. I'll be under the name "deoxxa" on both
 networks if I'm there at the time. You can also try decoding the following text
 using base64 to email me if you really need to.
 
-  ZGVveHhhQGZrbnNycy5iaXoK
+    ZGVveHhhQGZrbnNycy5iaXoK
