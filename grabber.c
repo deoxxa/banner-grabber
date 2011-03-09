@@ -21,7 +21,7 @@
 struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
 {
 #ifdef _DEBUG
-  fprintf(stderr, "bg_client_new(%d, %lu, %p)\n", fd, host, port);
+  fprintf(stderr, "bg_client_new(%d, %lu, %d)\n", fd, host, port);
 #endif
 
   requests_current++;
@@ -140,7 +140,7 @@ void client_read_callback(evutil_socket_t fd, void* arg)
 
   struct bg_client* client = (struct bg_client*)arg;
 
-  char tmp[2048];
+  char tmp[1024];
   int read = recv(client->fd, tmp, 1024, 0);
   if (read > 0)
     dybuf_append(client->response, tmp, read);
@@ -208,11 +208,19 @@ void stdin_read_callback(evutil_socket_t fd, void* arg)
 #endif
 
   char line[1024];
+  memset(line, 0, 1024);
   if (fgets(line, 1024, stdin) == NULL)
   {
     event_del(event_stdin);
     return;
   }
+
+  int i = 0;
+  for (i=0;i<1024;++i)
+    if (line[i] == '#')
+      line[i] = 0;
+    else if (line[i] == ' ')
+      line[i] = 0;
 
   char host_str[16];
   struct in_addr host_in;
