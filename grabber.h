@@ -31,6 +31,7 @@ void stdin_callback(evutil_socket_t fd, short ev, void* arg);
 void stdin_read_callback(evutil_socket_t fd, void* arg);
 void stdin_error_callback(evutil_socket_t fd, void* arg);
 
+struct event_config* ev_config;
 struct event_base* ev_base;
 struct event* event_stdin;
 int requests_current;

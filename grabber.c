@@ -291,6 +291,7 @@ int main(int argc, char** argv)
   output_function_pre = &output_function_csv_pre;
   output_function_record = &output_function_csv_record;
   output_function_post = &output_function_csv_post;
+  ev_config = NULL;
   ev_base = NULL;
   event_stdin = NULL;
 
@@ -340,7 +341,10 @@ int main(int argc, char** argv)
     }
   }
 
-  ev_base = event_base_new();
+  ev_config = event_config_new();
+  event_config_require_features(ev_config, EV_FEATURE_FDS);
+  ev_base = event_base_new_with_config(ev_config);
+  event_config_free(ev_config);
 
   event_stdin = event_new(ev_base, fileno(stdin), EV_READ, &stdin_callback, NULL);
   event_add(event_stdin, NULL);
