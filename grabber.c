@@ -36,6 +36,7 @@ struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
   client->request_sent = 0;
   client->response = dybuf_new();
   client->response_read = 0;
+  client->error = 0;
 
   char ip_str[16];
   sprintf(ip_str, "%lu.%lu.%lu.%lu", ((client->host & 0xFF000000) >> 24), ((client->host & 0x00FF0000) >> 16), ((client->host & 0x0000FF00) >> 8), ((client->host & 0x000000FF) >> 0));
@@ -177,7 +178,8 @@ void client_finished_callback(evutil_socket_t fd, void* arg)
 #endif
 
   struct bg_client* client = (struct bg_client*)arg;
-  (*output_function_record)(client->host, client->port, time(NULL), client->response->data, client->response->used);
+  if (!client->error && client->response->used >= response_min_length)
+    (*output_function_record)(client->host, client->port, time(NULL), client->response->data, client->response->used);
   bg_client_free(client);
 }
 
@@ -188,6 +190,7 @@ void client_error_callback(evutil_socket_t fd, void* arg)
 #endif
 
   struct bg_client* client = (struct bg_client*)arg;
+  client->error = 1;
   client_finished_callback(fd, arg);
 }
 
@@ -284,6 +287,7 @@ int main(int argc, char** argv)
   request_timeout->tv_sec = 5;
   request_timeout->tv_usec = 0;
   request_template = NULL;
+  response_min_length = 0;
   output_function_pre = &output_function_csv_pre;
   output_function_record = &output_function_csv_record;
   output_function_post = &output_function_csv_post;
@@ -292,12 +296,12 @@ int main(int argc, char** argv)
 
   int c;
   float tmp;
-  while ((c = getopt(argc, argv, "r:n:t:f:h")) != -1)
+  while ((c = getopt(argc, argv, "r:n:t:m:f:h")) != -1)
   {
     switch (c)
     {
     case 'h':
-      fprintf(stderr, "Usage: %s [-h] [-r request template] [-n concurrent requests] [-t timeout] [-f format (csv|json|xml)]\n", argv[0]);
+      fprintf(stderr, "Usage: %s [-h] [-r request template] [-n concurrent requests] [-t timeout] [-m minimum response length] [-f format (csv|json|xml)]\n", argv[0]);
       exit(0);
     case 'r':
       request_template = optarg;
@@ -309,6 +313,9 @@ int main(int argc, char** argv)
       tmp = atof(optarg);
       request_timeout->tv_sec = floor(tmp);
       request_timeout->tv_usec = tmp - floor(tmp);
+      break;
+    case 'm':
+      response_min_length = atoi(optarg);
       break;
     case 'f':
       if (strcmp(optarg, "csv") == 0)

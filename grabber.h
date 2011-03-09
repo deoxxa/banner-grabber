@@ -10,12 +10,12 @@ struct bg_client
   int fd;
   unsigned long int host;
   int port;
-  time_t time;
   struct event* ev;
   struct dybuf* request;
   int request_sent;
   struct dybuf* response;
   int response_read;
+  int error;
 };
 
 struct bg_client* bg_client_new(int fd, unsigned long int host, int port);
@@ -37,6 +37,7 @@ int requests_current;
 int requests_max;
 struct timeval* request_timeout;
 char* request_template;
+int response_min_length;
 
 void (*output_function_pre)();
 void (*output_function_record)(unsigned long int host, int port, time_t time, char* data, int len);
