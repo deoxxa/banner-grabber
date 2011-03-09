@@ -20,6 +20,10 @@
 
 struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "bg_client_new(%d, %lu, %p)\n", fd, host, port);
+#endif
+
   requests_current++;
 
   struct bg_client* client = malloc(sizeof(struct bg_client));
@@ -97,6 +101,10 @@ struct bg_client* bg_client_new(int fd, unsigned long int host, int port)
 
 void bg_client_free(struct bg_client* client)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "bg_client_free(%p)\n", client);
+#endif
+
   requests_current--;
 
   event_del(client->ev);
@@ -112,6 +120,10 @@ void bg_client_free(struct bg_client* client)
 
 void client_callback(evutil_socket_t fd, short ev, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "client_callback(%d, %d, %p)\n", fd, ev, arg);
+#endif
+
   if (ev & EV_READ)
     client_read_callback(fd, arg);
   if (ev & EV_WRITE)
@@ -122,6 +134,10 @@ void client_callback(evutil_socket_t fd, short ev, void* arg)
 
 void client_read_callback(evutil_socket_t fd, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "client_read_callback(%d, %p)\n", fd, arg);
+#endif
+
   struct bg_client* client = (struct bg_client*)arg;
 
   char tmp[2048];
@@ -136,6 +152,10 @@ void client_read_callback(evutil_socket_t fd, void* arg)
 
 void client_write_callback(evutil_socket_t fd, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "client_write_callback(%d, %p)\n", fd, arg);
+#endif
+
   struct bg_client* client = (struct bg_client*)arg;
 
   if (client->request_sent == 0)
@@ -152,6 +172,10 @@ void client_write_callback(evutil_socket_t fd, void* arg)
 
 void client_finished_callback(evutil_socket_t fd, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "client_finished_callback(%d, %p)\n", fd, arg);
+#endif
+
   struct bg_client* client = (struct bg_client*)arg;
   (*output_function_record)(client->host, client->port, time(NULL), client->response->data, client->response->used);
   bg_client_free(client);
@@ -159,18 +183,30 @@ void client_finished_callback(evutil_socket_t fd, void* arg)
 
 void client_error_callback(evutil_socket_t fd, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "client_error_callback(%d, %p)\n", fd, arg);
+#endif
+
   struct bg_client* client = (struct bg_client*)arg;
   client_finished_callback(fd, arg);
 }
 
 void stdin_callback(evutil_socket_t fd, short ev, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "stdin_callback(%d, %d, %p)\n", fd, ev, arg);
+#endif
+
   if (ev & EV_READ)
     stdin_read_callback(fd, arg);
 }
 
 void stdin_read_callback(evutil_socket_t fd, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "stdin_read_callback(%d, %p)\n", fd, arg);
+#endif
+
   char line[1024];
   if (fgets(line, 1024, stdin) == NULL)
   {
@@ -227,6 +263,9 @@ void stdin_read_callback(evutil_socket_t fd, void* arg)
 
 void stdin_error_callback(evutil_socket_t fd, void* arg)
 {
+#ifdef _DEBUG
+  fprintf(stderr, "stdin_error_callback(%d, %p)\n", fd, arg);
+#endif
 }
 
 int main(int argc, char** argv)
@@ -285,8 +324,6 @@ int main(int argc, char** argv)
       break;
     }
   }
-
-  printf("%d (%p)\n", fileno(stdin), stdin);
 
   ev_base = event_base_new();
 
