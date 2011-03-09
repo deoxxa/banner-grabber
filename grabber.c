@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <event2/event.h>
 #include <time.h>
+#include <math.h>
 
 #include "grabber.h"
 #include "dybuf.h"
@@ -105,7 +106,7 @@ void bg_client_free(struct bg_client* client)
   dybuf_free(client->response);
   free(client);
 
-  if (requests_current < 10)
+  if (requests_current < requests_max)
     event_add(event_stdin, NULL);
 }
 
@@ -115,6 +116,8 @@ void client_callback(evutil_socket_t fd, short ev, void* arg)
     client_read_callback(fd, arg);
   if (ev & EV_WRITE)
     client_write_callback(fd, arg);
+  if (ev & EV_TIMEOUT)
+    client_error_callback(fd, arg);
 }
 
 void client_read_callback(evutil_socket_t fd, void* arg)
@@ -144,7 +147,7 @@ void client_write_callback(evutil_socket_t fd, void* arg)
   }
 
   event_assign(client->ev, ev_base, client->fd, EV_READ|EV_PERSIST, &client_callback, client);
-  event_add(client->ev, NULL);
+  event_add(client->ev, request_timeout);
 }
 
 void client_finished_callback(evutil_socket_t fd, void* arg)
@@ -214,11 +217,11 @@ void stdin_read_callback(evutil_socket_t fd, void* arg)
   struct bg_client* client = bg_client_new(s, host, port);
 
   client->ev = event_new(ev_base, client->fd, EV_READ|EV_WRITE, &client_callback, client);
-  event_add(client->ev, NULL);
+  event_add(client->ev, request_timeout);
 
   connect(s, (struct sockaddr*)&saddr, sizeof(struct sockaddr_in));
 
-  if (requests_current < 10)
+  if (requests_current < requests_max)
     event_add(event_stdin, NULL);
 }
 
@@ -230,7 +233,9 @@ int main(int argc, char** argv)
 {
   requests_max = 50;
   requests_current = 0;
-  request_timeout = 10;
+  request_timeout = malloc(sizeof(struct timeval));
+  request_timeout->tv_sec = 5;
+  request_timeout->tv_usec = 0;
   request_template = NULL;
   output_function_pre = &output_function_csv_pre;
   output_function_record = &output_function_csv_record;
@@ -239,6 +244,7 @@ int main(int argc, char** argv)
   event_stdin = NULL;
 
   int c;
+  float tmp;
   while ((c = getopt(argc, argv, "r:n:t:f:h")) != -1)
   {
     switch (c)
@@ -253,7 +259,9 @@ int main(int argc, char** argv)
       requests_max = atoi(optarg);
       break;
     case 't':
-      request_timeout = atoi(optarg);
+      tmp = atof(optarg);
+      request_timeout->tv_sec = floor(tmp);
+      request_timeout->tv_usec = tmp - floor(tmp);
       break;
     case 'f':
       if (strcmp(optarg, "csv") == 0)
@@ -277,6 +285,8 @@ int main(int argc, char** argv)
       break;
     }
   }
+
+  printf("%d (%p)\n", fileno(stdin), stdin);
 
   ev_base = event_base_new();
 

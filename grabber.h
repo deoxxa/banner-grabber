@@ -35,7 +35,7 @@ struct event_base* ev_base;
 struct event* event_stdin;
 int requests_current;
 int requests_max;
-int request_timeout;
+struct timeval* request_timeout;
 char* request_template;
 
 void (*output_function_pre)();
